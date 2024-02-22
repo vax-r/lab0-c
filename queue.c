@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -227,8 +228,78 @@ void q_reverseK(struct list_head *head, int k)
     list_splice_init(&new_head, head);
 }
 
+struct list_head *mergeTwolists(struct list_head *l1, struct list_head *l2)
+{
+    struct list_head *head = NULL;
+    struct list_head **head_ptr = &head;
+    for (; l1 && l2; head_ptr = &(*head_ptr)->next) {
+        element_t *ele_1 = list_entry(l1, element_t, list);
+        element_t *ele_2 = list_entry(l2, element_t, list);
+        if (strcmp(ele_1->value, ele_2->value) >= 0) {
+            *head_ptr = l2;
+            l2 = l2->next;
+        } else {
+            *head_ptr = l1;
+            l1 = l1->next;
+        }
+    }
+    *head_ptr = (struct list_head *) ((uintptr_t) l1 | (uintptr_t) l2);
+    return head;
+}
+
+struct list_head *mergesort(struct list_head *head)
+{
+    if (!head || !head->next)
+        return head;
+
+    struct list_head *result = NULL;
+    struct list_head *stack[1000];
+    int top = 0;
+    stack[top++] = head;
+
+    while (top) {
+        struct list_head *left = stack[--top];
+
+        if (left) {
+            struct list_head *slow = left;
+            struct list_head *fast;
+
+            for (fast = left->next; fast && fast->next; fast = fast->next->next)
+                slow = slow->next;
+            struct list_head *right = slow->next;
+            slow->next = NULL; /* Split the list into two */
+
+            stack[top++] = left;
+            stack[top++] = right;
+        } else {
+            result = mergeTwolists(result, stack[--top]);
+        }
+    }
+    return result;
+}
+
 /* Sort elements of queue in ascending/descending order */
-void q_sort(struct list_head *head, bool descend) {}
+void q_sort(struct list_head *head, bool descend)
+{
+    if (!head || list_empty(head))
+        return;
+    head->prev->next = NULL; /* Make the linked list from circular to linear */
+    head->next = mergesort(head->next);
+
+    /* Reconstruct the linked list back to a circular doubly linked list */
+    struct list_head *cur = head;
+    struct list_head *next = head->next;
+    while (next) {
+        next->prev = cur;
+        cur = next;
+        next = next->next;
+    }
+    cur->next = head;
+    head->prev = cur;
+
+    if (descend)
+        q_reverse(head);
+}
 
 /* Remove every node which has a node with a strictly less value anywhere to
  * the right side of it */
