@@ -153,12 +153,14 @@ bool q_delete_dup(struct list_head *head)
     element_t *cur, *tmp;
     list_for_each_entry_safe (cur, tmp, head, list) {
         if (&tmp->list != head && !strcmp(cur->value, tmp->value)) {
-            free(cur->value);
             list_del(&cur->list);
+            free(cur->value);
+            free(cur);
             dup = true;
         } else if (dup) {
-            free(cur->value);
             list_del(&cur->list);
+            free(cur->value);
+            free(cur);
             dup = false;
         }
     }
@@ -174,6 +176,8 @@ void q_swap(struct list_head *head)
 
     struct list_head *first, *second;
     list_for_each_safe (first, second, head) {
+        if (second == head)
+            break;
         first->prev->next = second;
         second->prev = first->prev;
         first->next = second->next;
@@ -252,30 +256,20 @@ struct list_head *mergesort(struct list_head *head)
     if (!head || !head->next)
         return head;
 
-    struct list_head *result = NULL;
-    struct list_head *stack[1000];
-    int top = 0;
-    stack[top++] = head;
+    struct list_head *first = head;
+    struct list_head *last = head->prev;
 
-    while (top) {
-        struct list_head *left = stack[--top];
-
-        if (left) {
-            struct list_head *slow = left;
-            struct list_head *fast;
-
-            for (fast = left->next; fast && fast->next; fast = fast->next->next)
-                slow = slow->next;
-            struct list_head *right = slow->next;
-            slow->next = NULL; /* Split the list into two */
-
-            stack[top++] = left;
-            stack[top++] = right;
-        } else {
-            result = mergeTwolists(result, stack[--top]);
-        }
+    while (first != last && first->next != last) {
+        first = first->next;
+        last = last->prev;
     }
-    return result;
+    struct list_head *l1 = head;
+    struct list_head *l2 = first->next;
+    l2->prev = head->prev;
+    l1->prev = first;
+    first->next = NULL;
+
+    return mergeTwolists(mergesort(l1), mergesort(l2));
 }
 
 /* Sort elements of queue in ascending/descending order */
@@ -284,6 +278,7 @@ void q_sort(struct list_head *head, bool descend)
     if (!head || list_empty(head))
         return;
     head->prev->next = NULL; /* Make the linked list from circular to linear */
+    head->next->prev = head->prev;
     head->next = mergesort(head->next);
 
     /* Reconstruct the linked list back to a circular doubly linked list */
@@ -306,7 +301,23 @@ void q_sort(struct list_head *head, bool descend)
 int q_ascend(struct list_head *head)
 {
     // https://leetcode.com/problems/remove-nodes-from-linked-list/
-    return 0;
+    if (!head || list_empty(head))
+        return 0;
+
+    element_t *right = list_entry(head->prev, element_t, list);
+    element_t *left = list_entry(head->prev->prev, element_t, list);
+    while (&left->list != head) {
+        if (strcmp(right->value, left->value) > 0) {
+            left = list_entry(left->list.prev, element_t, list);
+            right = list_entry(right->list.prev, element_t, list);
+        } else {
+            list_del(&left->list);
+            free(left->value);
+            free(left);
+            left = list_entry(right->list.prev, element_t, list);
+        }
+    }
+    return q_size(head);
 }
 
 /* Remove every node which has a node with a strictly greater value anywhere to
@@ -314,7 +325,42 @@ int q_ascend(struct list_head *head)
 int q_descend(struct list_head *head)
 {
     // https://leetcode.com/problems/remove-nodes-from-linked-list/
-    return 0;
+    if (!head || list_empty(head))
+        return 0;
+
+    element_t *right = list_entry(head->prev, element_t, list);
+    element_t *left = list_entry(head->prev->prev, element_t, list);
+    while (&left->list != head) {
+        if (strcmp(right->value, left->value) < 0) {
+            left = list_entry(left->list.prev, element_t, list);
+            right = list_entry(right->list.prev, element_t, list);
+        } else {
+            list_del(&left->list);
+            free(left->value);
+            free(left);
+            left = list_entry(right->list.prev, element_t, list);
+        }
+    }
+    return q_size(head);
+}
+
+/* Helper function for q_merge(), merge two lists together */
+int __merge(struct list_head *l1, struct list_head *l2)
+{
+    if (!l1 || !l2)
+        return 0;
+    LIST_HEAD(tmp_head);
+    while (!list_empty(l1) && !list_empty(l2)) {
+        element_t *ele_1 = list_first_entry(l1, element_t, list);
+        element_t *ele_2 = list_first_entry(l2, element_t, list);
+        element_t *ele_min =
+            strcmp(ele_1->value, ele_2->value) < 0 ? ele_1 : ele_2;
+        list_move_tail(&ele_min->list, &tmp_head);
+    }
+    list_splice_tail_init(l1, &tmp_head);
+    list_splice_tail_init(l2, &tmp_head);
+    list_splice(&tmp_head, l1);
+    return q_size(l1);
 }
 
 /* Merge all the queues into one sorted queue, which is in ascending/descending
@@ -322,5 +368,23 @@ int q_descend(struct list_head *head)
 int q_merge(struct list_head *head, bool descend)
 {
     // https://leetcode.com/problems/merge-k-sorted-lists/
-    return 0;
+    if (!head || list_empty(head))
+        return 0;
+    else if (list_is_singular(head))
+        return q_size(list_first_entry(head, queue_contex_t, chain)->q);
+    int size = q_size(head);
+    int count = (size % 2) ? size / 2 + 1 : size / 2;
+    int queue_size = 0;
+    for (int i = 0; i < count; i++) {
+        queue_contex_t *first = list_first_entry(head, queue_contex_t, chain);
+        queue_contex_t *second =
+            list_entry(first->chain.next, queue_contex_t, chain);
+        while (!list_empty(first->q) && !list_empty(second->q)) {
+            queue_size = __merge(first->q, second->q);
+            list_move_tail(&second->chain, head);
+            first = list_entry(first->chain.next, queue_contex_t, chain);
+            second = list_entry(first->chain.next, queue_contex_t, chain);
+        }
+    }
+    return queue_size;
 }
