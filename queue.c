@@ -272,8 +272,7 @@ struct list_head *mergesort(struct list_head *head)
     return mergeTwolists(mergesort(l1), mergesort(l2));
 }
 
-/* Sort elements of queue in ascending/descending order */
-void q_sort(struct list_head *head, bool descend)
+void __qsort(struct list_head *head)
 {
     if (!head || list_empty(head))
         return;
@@ -291,6 +290,138 @@ void q_sort(struct list_head *head, bool descend)
     }
     cur->next = head;
     head->prev = cur;
+}
+
+/* Linux kernel list sort */
+
+typedef int (*list_cmp_func_t)(const struct list_head *,
+                               const struct list_head *);
+
+static int cmpfunc(const struct list_head *a, const struct list_head *b)
+{
+    element_t *ela = list_entry(a, element_t, list);
+    element_t *elb = list_entry(b, element_t, list);
+    return strcmp(ela->value, elb->value);
+}
+
+static struct list_head *merge(list_cmp_func_t cmp,
+                               struct list_head *a,
+                               struct list_head *b)
+{
+    struct list_head *head = NULL, **tail = &head;
+
+    for (;;) {
+        if (cmp(a, b) <= 0) {
+            *tail = a;
+            tail = &a->next;
+            a = a->next;
+            if (!a) {
+                *tail = b;
+                break;
+            }
+        } else {
+            *tail = b;
+            tail = &b->next;
+            b = b->next;
+            if (!b) {
+                *tail = a;
+                break;
+            }
+        }
+    }
+    return head;
+}
+
+static void merge_final(list_cmp_func_t cmp,
+                        struct list_head *head,
+                        struct list_head *a,
+                        struct list_head *b)
+{
+    struct list_head *tail = head;
+    unsigned char count = 0;
+    for (;;) {
+        if (cmp(a, b) <= 0) {
+            tail->next = a;
+            a->prev = tail;
+            tail = a;
+            a = a->next;
+            if (!a)
+                break;
+        } else {
+            tail->next = b;
+            b->prev = tail;
+            tail = b;
+            b = b->next;
+            if (!b) {
+                b = a;
+                break;
+            }
+        }
+    }
+
+    tail->next = b;
+    do {
+        if (__glibc_unlikely(!++count))
+            cmp(b, b);
+        b->prev = tail;
+        tail = b;
+        b = b->next;
+    } while (b);
+
+    tail->next = head;
+    head->prev = tail;
+}
+
+
+void list_sort(struct list_head *head, list_cmp_func_t cmp)
+{
+    struct list_head *list = head->next, *pending = NULL;
+    size_t count = 0; /* Count of pending */
+
+    if (list == head->prev)
+        return;
+
+    head->prev->next = NULL;
+
+    do {
+        size_t bits;
+        struct list_head **tail = &pending;
+        for (bits = count; bits & 1; bits >>= 1)
+            tail = &(*tail)->prev;
+
+        if (__glibc_likely(bits)) {
+            struct list_head *a = *tail, *b = a->prev;
+
+            a = merge(cmp, b, a);
+            a->prev = b->prev;
+            *tail = a;
+        }
+
+        list->prev = pending;
+        pending = list;
+        list = list->next;
+        pending->next = NULL;
+        count++;
+    } while (list);
+
+    list = pending;
+    pending = pending->prev;
+    for (;;) {
+        struct list_head *next = pending->prev;
+        if (!next)
+            break;
+        list = merge(cmp, pending, list);
+        pending = next;
+    }
+    merge_final(cmp, head, pending, list);
+}
+
+/* End of linux kernel list sort */
+
+/* Sort elements of queue in ascending/descending order */
+void q_sort(struct list_head *head, bool descend)
+{
+    list_sort(head, cmpfunc);
 
     if (descend)
         q_reverse(head);
