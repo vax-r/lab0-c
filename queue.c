@@ -519,3 +519,35 @@ int q_merge(struct list_head *head, bool descend)
     }
     return queue_size;
 }
+
+
+static inline void swap(struct list_head *a, struct list_head *b)
+{
+    struct list_head *a_prev = a->prev;
+    struct list_head *b_prev = b->prev;
+    if (a->prev != b)
+        list_move(b, a_prev);
+    list_move(a, b_prev);
+}
+
+/* Fisher-Yates shuffle Algorithm */
+void q_shuffle(struct list_head *head)
+{
+    if (!head || list_is_singular(head))
+        return;
+
+    int len = q_size(head);
+    struct list_head *pos, *tmp;
+
+    /* Iterate over the queue backwards safe against removal of list entry */
+    for (pos = head->prev, tmp = pos->prev; pos != head && len;
+         pos = tmp, tmp = pos->prev, len--) {
+        int r = rand() % len;
+        struct list_head *pick = head->next;
+        while (r--)
+            pick = pick->next;
+        if (pick == pos)
+            continue;
+        swap(pos, pick);
+    }
+}

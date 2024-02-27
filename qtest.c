@@ -875,6 +875,20 @@ static bool do_merge(int argc, char *argv[])
     return ok && !error_check();
 }
 
+// static bool do_shuffle(int argc, char *argv[])
+// {
+//     if (!current || !current->q)
+//         report(3, "Warning: Calling shuffle on null queue");
+//     error_check();
+//     if (q_size(current->q) < 2)
+//         report(3, "Warning: Calling shuffle on single queue");
+//     error_check();
+//     if (exception_setup(true))
+//         q_shuffle(current->q);
+//     q_show(3);
+//     return !error_check();
+// }
+
 static bool is_circular()
 {
     struct list_head *cur = current->q->next;
@@ -1060,6 +1074,7 @@ static void console_init()
               "Number of times allow queue operations to return false", NULL);
     add_param("descend", &descend,
               "Sort and merge queue in ascending/descending order", NULL);
+    // ADD_COMMAND(shuffle, "Fisher-Yates shuffle Algorithm", "");
 }
 
 /* Signal handlers */
