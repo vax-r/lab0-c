@@ -560,10 +560,9 @@ void q_shuffle(struct list_head *head)
     /* Iterate over the queue backwards safe against removal of list entry */
     for (pos = head->prev, tmp = pos->prev; pos != head && len;
          pos = tmp, tmp = pos->prev, len--) {
-        int r = rand() % len;
-        struct list_head *pick = head->next;
-        while (r--)
-            pick = pick->next;
+        struct list_head *pick = head->prev;
+        for (int r = rand() % len; r > 0; r--)
+            pick = pick->prev;
         if (pick == pos)
             continue;
         swap(pos, pick);
