@@ -520,14 +520,32 @@ int q_merge(struct list_head *head, bool descend)
     return queue_size;
 }
 
+/* Replace old entry by new one
+ * Reference:
+ * https://github.com/torvalds/linux/blob/cf1182944c7cc9f1c21a8a44e0d29abe12527412/include/linux/list.h#L241
+ */
+static inline void replace(struct list_head *old, struct list_head *new)
+{
+    new->next = old->next;
+    new->next->prev = new;
+    new->prev = old->prev;
+    new->prev->next = new;
+}
 
+
+/* Replace a with b and re-add a at b's position
+ * Reference:
+ * https://github.com/torvalds/linux/blob/cf1182944c7cc9f1c21a8a44e0d29abe12527412/include/linux/list.h#L269
+ */
 static inline void swap(struct list_head *a, struct list_head *b)
 {
-    struct list_head *a_prev = a->prev;
-    struct list_head *b_prev = b->prev;
-    if (a->prev != b)
-        list_move(b, a_prev);
-    list_move(a, b_prev);
+    struct list_head *pos = b->prev;
+
+    list_del(b);
+    replace(a, b);
+    if (pos == a)
+        pos = b;
+    list_add(a, pos);
 }
 
 /* Fisher-Yates shuffle Algorithm */
