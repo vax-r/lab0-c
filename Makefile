@@ -42,7 +42,8 @@ OBJS := qtest.o report.o console.o harness.o queue.o \
         shannon_entropy.o \
         linenoise.o web.o \
 		game.o \
-		mt19937-64.o
+		mt19937-64.o \
+		zobrist.o
 
 deps := $(OBJS:%.o=.%.o.d)
 
