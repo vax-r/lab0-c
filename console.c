@@ -17,7 +17,7 @@
 #include "report.h"
 #include "web.h"
 
-#include "negamax.h"
+#include "game_agents/negamax.h"
 
 /* Some global values */
 int simulation = 0;
