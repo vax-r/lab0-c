@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "console.h"
+#include "game.h"
 #include "report.h"
 #include "web.h"
 
@@ -414,6 +415,16 @@ static bool do_web(int argc, char *argv[])
     return true;
 }
 
+static bool do_ttt(int argc, char *argv[])
+{
+    char table[N_GRIDS];
+    memset(table, ' ', N_GRIDS);
+
+    draw_board(table);
+
+    return true;
+}
+
 /* Initialize interpreter */
 void init_cmd()
 {
@@ -437,6 +448,7 @@ void init_cmd()
     add_param("error", &err_limit, "Number of errors until exit", NULL);
     add_param("echo", &echo, "Do/don't echo commands", NULL);
     add_param("entropy", &show_entropy, "Show/Hide Shannon entropy", NULL);
+    ADD_COMMAND(ttt, "Do tic-tac-toe game", "");
 
     init_in();
     init_time(&last_time);
