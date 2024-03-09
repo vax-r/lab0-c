@@ -61,6 +61,27 @@ fixed_point_t fixed_sqrt(fixed_point_t x)
     return q;
 }
 
+fixed_point_t fixed_log(fixed_point_t v)
+{
+    fixed_point_t y = ((v - (1U << FIXED_SCALE_BITS)) << (FIXED_SCALE_BITS)) /
+                      (v + (1U << FIXED_SCALE_BITS));
+
+    fixed_point_t ans = 0U;
+    for (unsigned i = 1; i < 20; i += 2) {
+        fixed_point_t z = (1U << FIXED_SCALE_BITS);
+        for (int j = 0; j < i; j++) {
+            z *= y;
+            z >>= FIXED_SCALE_BITS;
+        }
+        z <<= FIXED_SCALE_BITS;
+        z /= (i << FIXED_SCALE_BITS);
+
+        ans += z;
+    }
+    ans <<= 1;
+    return ans;
+}
+
 static inline fixed_point_t uct_score(int n_total,
                                       int n_visits,
                                       fixed_point_t score)
@@ -68,10 +89,11 @@ static inline fixed_point_t uct_score(int n_total,
     if (n_visits == 0)
         return FIXED_MAX;
     fixed_point_t result =
-        score / (fixed_point_t) (n_visits * (1U << FIXED_SCALE_BITS));
-    result <<= FIXED_SCALE_BITS;
-    fixed_point_t tmp = EXPLORATION_FACTOR *
-                        (fixed_point_t) (sqrt(log(n_total) / n_visits) * 1000);
+        score << FIXED_SCALE_BITS /
+                     (fixed_point_t) (n_visits << FIXED_SCALE_BITS);
+    fixed_point_t tmp =
+        EXPLORATION_FACTOR *
+        fixed_sqrt(fixed_log(n_total << FIXED_SCALE_BITS / n_visits));
     tmp >>= FIXED_SCALE_BITS;
     return result + tmp;
 }
