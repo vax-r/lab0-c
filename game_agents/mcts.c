@@ -37,6 +37,30 @@ static void free_node(struct node *node)
     free(node);
 }
 
+fixed_point_t fixed_sqrt(fixed_point_t x)
+{
+    if (!x)
+        return x;
+
+    x += (1U << (FIXED_SCALE_BITS - 1));
+    fixed_point_t q, b, r;
+    r = x >> FIXED_SCALE_BITS;
+    b = 1U << 18;
+    q = 0;
+    while (b > 0) {
+        fixed_point_t t = q + b;
+        if (r >= t) {
+            r -= t;
+            q = t + b;
+        }
+        r <<= 1;
+        b >>= 1;
+    }
+    if (r > q)
+        q++;
+    return q;
+}
+
 static inline fixed_point_t uct_score(int n_total,
                                       int n_visits,
                                       fixed_point_t score)
@@ -46,7 +70,7 @@ static inline fixed_point_t uct_score(int n_total,
     fixed_point_t result =
         score / (fixed_point_t) (n_visits * (1U << FIXED_SCALE_BITS));
     result <<= FIXED_SCALE_BITS;
-    fixed_point_t tmp = (fixed_point_t) (EXPLORATION_FACTOR * 1000) *
+    fixed_point_t tmp = EXPLORATION_FACTOR *
                         (fixed_point_t) (sqrt(log(n_total) / n_visits) * 1000);
     tmp >>= FIXED_SCALE_BITS;
     return result + tmp;
