@@ -18,10 +18,12 @@
 #include "web.h"
 
 #include "game_agents/mcts.h"
+#include "game_agents/negamax.h"
 
 /* Some global values */
 int simulation = 0;
 int show_entropy = 0;
+int ai_civil_war = 0;
 static cmd_element_t *cmd_list = NULL;
 static param_element_t *param_list = NULL;
 static bool block_flag = false;
@@ -508,7 +510,9 @@ static bool do_ttt(int argc, char *argv[])
     char turn = 'X';
     char ai = 'O';
 
-    // negamax_init();
+    /* If AI v.s. AI, we make the second AI utilize negamax Algorithm */
+    if (ai_civil_war)
+        negamax_init();
 
     while (1) {
         char win = check_win(table);
@@ -528,11 +532,12 @@ static bool do_ttt(int argc, char *argv[])
                 table[move] = ai;
                 record_move(move);
             }
-            // int move = negamax_predict(table, ai).move;
-            // if (move != -1) {
-            //     table[move] = ai;
-            //     record_move(move);
-            // }
+        } else if (ai_civil_war) {
+            int move = negamax_predict(table, ai).move;
+            if (move != -1) {
+                table[move] = turn;
+                record_move(move);
+            }
         } else {
             draw_board(table);
             int move;
@@ -547,6 +552,15 @@ static bool do_ttt(int argc, char *argv[])
             record_move(move);
         }
         turn = turn == 'X' ? 'O' : 'X';
+        if (ai_civil_war) {
+            draw_board(table);
+            time_t timer = time(NULL);
+            struct tm *tm_info = localtime(&timer);
+
+            char buffer[26];
+            strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", tm_info);
+            puts(buffer);
+        }
     }
     print_moves();
 
@@ -577,6 +591,7 @@ void init_cmd()
     add_param("echo", &echo, "Do/don't echo commands", NULL);
     add_param("entropy", &show_entropy, "Show/Hide Shannon entropy", NULL);
     ADD_COMMAND(ttt, "Do tic-tac-toe game", "");
+    add_param("war", &ai_civil_war, "Trigger tic-tac-toe War Between AI", NULL);
 
     init_in();
     init_time(&last_time);
