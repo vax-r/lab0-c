@@ -19,7 +19,7 @@ typedef struct {
 
 /* Self-defined fixed-point type, using last 10 bits as fractional bits,
  * starting from lsb */
-#define FIXED_SCALE_BITS 10
+#define FIXED_SCALE_BITS 8
 #define FIXED_MAX (~0U)
 #define FIXED_MIN (0U)
 typedef unsigned fixed_point_t;
