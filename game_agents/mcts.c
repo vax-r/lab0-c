@@ -53,8 +53,20 @@ fixed_point_t fixed_sqrt(fixed_point_t x)
 
 fixed_point_t fixed_log(fixed_point_t v)
 {
-    fixed_point_t y = ((v - (1U << FIXED_SCALE_BITS)) << (FIXED_SCALE_BITS)) /
-                      (v + (1U << FIXED_SCALE_BITS));
+    if (!v || v == (1U << FIXED_SCALE_BITS))
+        return 0;
+
+    fixed_point_t numerator = (v - (1U << FIXED_SCALE_BITS));
+    int neg = 0;
+    if (GET_SIGN(numerator)) {
+        neg = 1;
+        numerator = CLR_SIGN(numerator);
+        numerator = (1U << 31) - numerator;
+    }
+
+    fixed_point_t y =
+        (numerator << FIXED_SCALE_BITS) / (v + (1U << FIXED_SCALE_BITS));
+
 
     fixed_point_t ans = 0U;
     for (unsigned i = 1; i < 20; i += 2) {
@@ -69,6 +81,7 @@ fixed_point_t fixed_log(fixed_point_t v)
         ans += z;
     }
     ans <<= 1;
+    ans = neg ? SET_SIGN(ans) : ans;
     return ans;
 }
 
@@ -83,7 +96,7 @@ static inline fixed_point_t uct_score(int n_total,
                      (fixed_point_t) (n_visits << FIXED_SCALE_BITS);
     fixed_point_t tmp =
         EXPLORATION_FACTOR *
-        fixed_sqrt(fixed_log(n_total << FIXED_SCALE_BITS / n_visits));
+        fixed_sqrt(fixed_log(n_total << FIXED_SCALE_BITS) / n_visits);
     tmp >>= FIXED_SCALE_BITS;
     return result + tmp;
 }

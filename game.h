@@ -22,6 +22,9 @@ typedef struct {
 #define FIXED_SCALE_BITS 8
 #define FIXED_MAX (~0U)
 #define FIXED_MIN (0U)
+#define GET_SIGN(x) ((x) & (1U << 31))
+#define SET_SIGN(x) ((x) | (1U << 31))
+#define CLR_SIGN(x) ((x) & ((1U << 31) - 1U))
 typedef unsigned fixed_point_t;
 
 extern const line_t lines[4];
