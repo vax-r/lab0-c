@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "console.h"
+#include "coroutine.h"
 #include "game.h"
 #include "report.h"
 #include "web.h"
@@ -502,6 +503,162 @@ static int get_input(char player)
     return GET_INDEX(y, x);
 }
 
+static jmp_buf sched;
+int move_records[100][N_GRIDS];
+int move_counts[100];
+
+void drawboard_callback(void *args)
+{
+    struct arg *board_args = (struct arg *) args;
+    struct coroutine *cr = malloc(sizeof(struct coroutine));
+    cr->table = board_args->table;
+    INIT_LIST_HEAD(&cr->list);
+
+    if (setjmp(cr->env) == 0) {
+        coroutine_add(cr);
+        coroutine_switch();
+    }
+    draw_board(board_args->table);
+    list_del(&cr->list);
+    free(cr);
+    coroutine_switch();
+}
+
+void mcts_callback(void *args)
+{
+    struct arg *mcts_args = (struct arg *) args;
+    struct coroutine *cr = malloc(sizeof(struct coroutine));
+    cr->table = mcts_args->table;
+    INIT_LIST_HEAD(&cr->list);
+
+    if (setjmp(cr->env) == 0) {
+        coroutine_add(cr);
+        coroutine_switch();
+    }
+
+    int move = mcts(mcts_args->table, mcts_args->player);
+    if (move != -1) {
+        mcts_args->table[move] = mcts_args->player;
+        record_move(move);
+    }
+    coroutine_switch();
+    list_del(&cr->list);
+    free(cr);
+}
+
+void negamax_callback(void *args)
+{
+    struct arg *negamax_args = (struct arg *) args;
+    struct coroutine *cr = malloc(sizeof(struct coroutine));
+    cr->table = negamax_args->table;
+    INIT_LIST_HEAD(&cr->list);
+
+    if (setjmp(cr->env) == 0) {
+        coroutine_add(cr);
+        coroutine_switch();
+    }
+
+    int move = negamax_predict(negamax_args->table, negamax_args->player).move;
+    if (move != -1) {
+        negamax_args->table[move] = negamax_args->player;
+        record_move(move);
+    }
+    coroutine_switch();
+    list_del(&cr->list);
+    free(cr);
+}
+
+void task_finish(void *args)
+{
+    int i = *((int *) args);
+    memcpy(move_records[i], move_record, sizeof(move_record));
+    memset(move_record, 0, sizeof(move_record));
+    move_counts[i] = move_count;
+    move_count = 0;
+    /*TODO : Clear all the nodes in crlist */
+    longjmp(sched, 1);
+}
+
+void task_war(void *args)
+{
+    struct arg *war_args = (struct arg *) args;
+    struct coroutine *task = malloc(sizeof(struct coroutine));
+    task->table = war_args->table;
+    INIT_LIST_HEAD(&task->list);
+
+    if (setjmp(task->env) == 0) {
+        coroutine_add(task);
+        coroutine_switch();
+    }
+
+    char win = check_win(war_args->table);
+    char player = war_args->player; /* First player */
+    while (win == ' ') {
+        switch (player) {
+        case 'X':
+            struct arg mcts_arg = {.table = war_args->table, .player = 'X'};
+            mcts_callback(&mcts_arg);
+            break;
+        case 'O':
+            struct arg negamax_arg = {.table = war_args->table, .player = 'O'};
+            negamax_callback(&negamax_arg);
+            break;
+        }
+        player = player == 'X' ? 'O' : 'X';
+
+        struct arg board_arg = {.table = war_args->table};
+        drawboard_callback(&board_arg);
+        win = check_win(war_args->table);
+    }
+
+    if (win == 'D')
+        printf("It is a draw!\n");
+    else
+        printf("%c won\n", win);
+
+    list_del(&task->list);
+    free(task);
+    longjmp(sched, 1);
+}
+
+static int ntasks;
+
+void schedule(char *table)
+{
+    void (*registered_task[])(void *) = {task_war, task_finish};
+    struct arg war_args = {.table = table, .player = 'X'};
+
+    for (int round = 0; round < 10; round++) {
+        INIT_LIST_HEAD(&crlist);
+        ntasks = 2;
+        setjmp(sched);
+
+        while (ntasks-- > 0) {
+            /* TODO : add key-board event */
+            if (ntasks & 1U) {
+                registered_task[0](&war_args);
+
+            } else {
+                memset(table, ' ', N_GRIDS);
+                registered_task[1](&round);
+            }
+        }
+    }
+
+    /* Show all the moves */
+    for (int j = 0; j < 10; j++) {
+        printf("Moves: ");
+        for (int i = 0; i < move_counts[j]; i++) {
+            printf("%c%d", 'A' + GET_COL(move_records[j][i]),
+                   1 + GET_ROW(move_records[j][i]));
+            if (i < move_counts[j] - 1) {
+                printf(" -> ");
+            }
+        }
+        printf("\n");
+    }
+}
+
 static bool do_ttt(int argc, char *argv[])
 {
     srand(time(NULL));
@@ -511,8 +668,11 @@ static bool do_ttt(int argc, char *argv[])
     char ai = 'O';
 
     /* If AI v.s. AI, we make the second AI utilize negamax Algorithm */
-    if (ai_civil_war)
+    if (ai_civil_war) {
         negamax_init();
+        schedule(table);
+        return true;
+    }
 
     while (1) {
         char win = check_win(table);
@@ -532,12 +692,6 @@ static bool do_ttt(int argc, char *argv[])
                 table[move] = ai;
                 record_move(move);
             }
-        } else if (ai_civil_war) {
-            int move = negamax_predict(table, ai).move;
-            if (move != -1) {
-                table[move] = turn;
-                record_move(move);
-            }
         } else {
             draw_board(table);
             int move;
@@ -552,15 +706,6 @@ static bool do_ttt(int argc, char *argv[])
             record_move(move);
         }
         turn = turn == 'X' ? 'O' : 'X';
-        if (ai_civil_war) {
-            draw_board(table);
-            time_t timer = time(NULL);
-            struct tm *tm_info = localtime(&timer);
-
-            char buffer[26];
-            strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", tm_info);
-            puts(buffer);
-        }
     }
     print_moves();
 
