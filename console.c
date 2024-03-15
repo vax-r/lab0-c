@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -503,9 +504,45 @@ static int get_input(char player)
     return GET_INDEX(y, x);
 }
 
+static struct termios orig_termios;
+
+static void disableRawMode()
+{
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+static void enableRawMode()
+{
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    atexit(disableRawMode);
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+#define MAX_ROUND 10
 static jmp_buf sched;
-int move_records[100][N_GRIDS];
-int move_counts[100];
+int move_records[MAX_ROUND][N_GRIDS];
+int move_counts[MAX_ROUND];
+static bool display_board = true;
+static bool stop_war = false;
+
+static void listen_keyboard()
+{
+    char c;
+    if (read(STDIN_FILENO, &c, 1) != 1)
+        coroutine_switch();
+
+    switch (c) {
+    case 16:
+        display_board ^= true;
+        break;
+    case 17:
+        stop_war = true;
+        break;
+    }
+    coroutine_switch();
+}
 
 void drawboard_callback(void *args)
 {
@@ -514,14 +551,18 @@ void drawboard_callback(void *args)
     cr->table = board_args->table;
     INIT_LIST_HEAD(&cr->list);
 
+    if (setjmp(cr->env) == 0 && display_board) {
+        coroutine_add(cr);
+        listen_keyboard();
+    }
+    if (display_board)
+        draw_board(board_args->table);
     if (setjmp(cr->env) == 0) {
         coroutine_add(cr);
-        coroutine_switch();
+        listen_keyboard();
     }
-    draw_board(board_args->table);
     list_del(&cr->list);
     free(cr);
-    coroutine_switch();
 }
 
 void mcts_callback(void *args)
@@ -533,7 +574,7 @@ void mcts_callback(void *args)
 
     if (setjmp(cr->env) == 0) {
         coroutine_add(cr);
-        coroutine_switch();
+        listen_keyboard();
     }
 
     int move = mcts(mcts_args->table, mcts_args->player);
@@ -541,7 +582,11 @@ void mcts_callback(void *args)
         mcts_args->table[move] = mcts_args->player;
         record_move(move);
     }
-    coroutine_switch();
+    if (setjmp(cr->env) == 0) {
+        coroutine_add(cr);
+        listen_keyboard();
+    }
+
     list_del(&cr->list);
     free(cr);
 }
@@ -555,7 +600,7 @@ void negamax_callback(void *args)
 
     if (setjmp(cr->env) == 0) {
         coroutine_add(cr);
-        coroutine_switch();
+        listen_keyboard();
     }
 
     int move = negamax_predict(negamax_args->table, negamax_args->player).move;
@@ -563,7 +608,12 @@ void negamax_callback(void *args)
         negamax_args->table[move] = negamax_args->player;
         record_move(move);
     }
-    coroutine_switch();
+
+    if (setjmp(cr->env) == 0) {
+        coroutine_add(cr);
+        listen_keyboard();
+    }
+
     list_del(&cr->list);
     free(cr);
 }
@@ -582,14 +632,6 @@ void task_finish(void *args)
 void task_war(void *args)
 {
     struct arg *war_args = (struct arg *) args;
-    struct coroutine *task = malloc(sizeof(struct coroutine));
-    task->table = war_args->table;
-    INIT_LIST_HEAD(&task->list);
-
-    if (setjmp(task->env) == 0) {
-        coroutine_add(task);
-        coroutine_switch();
-    }
 
     char win = check_win(war_args->table);
     char player = war_args->player; /* First player */
@@ -607,7 +649,8 @@ void task_war(void *args)
         player = player == 'X' ? 'O' : 'X';
 
         struct arg board_arg = {.table = war_args->table};
-        drawboard_callback(&board_arg);
+        if (display_board)
+            drawboard_callback(&board_arg);
         win = check_win(war_args->table);
     }
 
@@ -615,9 +658,6 @@ void task_war(void *args)
         printf("It is a draw!\n");
     else
         printf("%c won\n", win);
-
-    list_del(&task->list);
-    free(task);
     longjmp(sched, 1);
 }
 
@@ -625,16 +665,25 @@ static int ntasks;
 
 void schedule(char *table)
 {
+    enableRawMode();
+    display_board = true;
+    stop_war = false;
+    memset(move_record, 0, sizeof(move_record));
+    move_count = 0;
+    /* Enable non-blocking read */
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
     void (*registered_task[])(void *) = {task_war, task_finish};
     struct arg war_args = {.table = table, .player = 'X'};
-
-    for (int round = 0; round < 10; round++) {
-        INIT_LIST_HEAD(&crlist);
+    int round;
+    for (round = 0; !stop_war && round < MAX_ROUND; round++) {
+        crlist = malloc(sizeof(struct list_head));
+        INIT_LIST_HEAD(crlist);
         ntasks = 2;
         setjmp(sched);
 
         while (ntasks-- > 0) {
-            /* TODO : add key-board event */
             if (ntasks & 1U) {
                 registered_task[0](&war_args);
 
@@ -645,8 +694,11 @@ void schedule(char *table)
         }
     }
 
+    disableRawMode();
+    fcntl(STDIN_FILENO, F_SETFL, flags);
+
     /* Show all the moves */
-    for (int j = 0; j < 10; j++) {
+    for (int j = 0; j < round; j++) {
         printf("Moves: ");
         for (int i = 0; i < move_counts[j]; i++) {
             printf("%c%d", 'A' + GET_COL(move_records[j][i]),
