@@ -7,6 +7,7 @@
 #include "game.h"
 #include "mcts.h"
 #include "util.h"
+#include "wyhash.h"
 
 struct node {
     int move;
@@ -133,7 +134,7 @@ static fixed_point_t simulate(char *table, char player)
         int n_moves = 0;
         while (n_moves < N_GRIDS && moves[n_moves] != -1)
             ++n_moves;
-        int move = moves[rand() % n_moves];
+        int move = moves[wyhash64() % n_moves];
         free(moves);
         temp_table[move] = current_player;
         char win;
