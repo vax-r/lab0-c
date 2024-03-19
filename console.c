@@ -521,7 +521,6 @@ static void enableRawMode()
 }
 
 #define MAX_ROUND 10
-static jmp_buf sched;
 int move_records[MAX_ROUND][N_GRIDS];
 int move_counts[MAX_ROUND];
 static bool display_board = true;
@@ -530,8 +529,11 @@ static bool stop_war = false;
 static void listen_keyboard()
 {
     char c;
-    if (read(STDIN_FILENO, &c, 1) != 1)
-        coroutine_switch();
+    preempt_disable();
+    if (read(STDIN_FILENO, &c, 1) != 1) {
+        preempt_enable();
+        return;
+    }
 
     switch (c) {
     case 16:
@@ -541,157 +543,105 @@ static void listen_keyboard()
         stop_war = true;
         break;
     }
-    coroutine_switch();
+    preempt_enable();
 }
 
 void drawboard_callback(void *args)
 {
-    struct arg *board_args = (struct arg *) args;
-    struct coroutine *cr = malloc(sizeof(struct coroutine));
-    cr->table = board_args->table;
-    INIT_LIST_HEAD(&cr->list);
+    char *table = ((struct arg *) args)->table;
 
-    if (setjmp(cr->env) == 0 && display_board) {
-        coroutine_add(cr);
-        listen_keyboard();
+    if (display_board) {
+        preempt_disable();
+        draw_board(table);
+        preempt_enable();
     }
-    if (display_board)
-        draw_board(board_args->table);
-    if (setjmp(cr->env) == 0) {
-        coroutine_add(cr);
-        listen_keyboard();
-    }
-    list_del(&cr->list);
-    free(cr);
 }
 
 void mcts_callback(void *args)
 {
-    struct arg *mcts_args = (struct arg *) args;
-    struct coroutine *cr = malloc(sizeof(struct coroutine));
-    cr->table = mcts_args->table;
-    INIT_LIST_HEAD(&cr->list);
+    char *table = ((struct arg *) args)->table;
+    char player = ((struct arg *) args)->player;
 
-    if (setjmp(cr->env) == 0) {
-        coroutine_add(cr);
-        listen_keyboard();
-    }
-
-    int move = mcts(mcts_args->table, mcts_args->player);
+    preempt_disable();
+    int move = mcts(table, player);
     if (move != -1) {
-        mcts_args->table[move] = mcts_args->player;
+        table[move] = player;
         record_move(move);
     }
-    if (setjmp(cr->env) == 0) {
-        coroutine_add(cr);
-        listen_keyboard();
-    }
-
-    list_del(&cr->list);
-    free(cr);
+    preempt_enable();
 }
 
 void negamax_callback(void *args)
 {
-    struct arg *negamax_args = (struct arg *) args;
-    struct coroutine *cr = malloc(sizeof(struct coroutine));
-    cr->table = negamax_args->table;
-    INIT_LIST_HEAD(&cr->list);
+    char *table = ((struct arg *) args)->table;
+    char player = ((struct arg *) args)->player;
 
-    if (setjmp(cr->env) == 0) {
-        coroutine_add(cr);
-        listen_keyboard();
-    }
-
-    int move = negamax_predict(negamax_args->table, negamax_args->player).move;
+    preempt_disable();
+    int move = negamax_predict(table, player).move;
     if (move != -1) {
-        negamax_args->table[move] = negamax_args->player;
+        table[move] = player;
         record_move(move);
     }
-
-    if (setjmp(cr->env) == 0) {
-        coroutine_add(cr);
-        listen_keyboard();
-    }
-
-    list_del(&cr->list);
-    free(cr);
+    preempt_enable();
 }
 
-void task_finish(void *args)
+static void ai_game(char *table)
 {
-    int i = *((int *) args);
-    memcpy(move_records[i], move_record, sizeof(move_record));
-    memset(move_record, 0, sizeof(move_record));
-    move_counts[i] = move_count;
-    move_count = 0;
-    /*TODO : Clear all the nodes in crlist */
-    longjmp(sched, 1);
-}
-
-void task_war(void *args)
-{
-    struct arg *war_args = (struct arg *) args;
-
-    char win = check_win(war_args->table);
-    char player = war_args->player; /* First player */
-    while (win == ' ') {
-        switch (player) {
-        case 'X':
-            struct arg mcts_arg = {.table = war_args->table, .player = 'X'};
-            mcts_callback(&mcts_arg);
-            break;
-        case 'O':
-            struct arg negamax_arg = {.table = war_args->table, .player = 'O'};
-            negamax_callback(&negamax_arg);
-            break;
-        }
-        player = player == 'X' ? 'O' : 'X';
-
-        struct arg board_arg = {.table = war_args->table};
-        if (display_board)
-            drawboard_callback(&board_arg);
-        win = check_win(war_args->table);
-    }
-
-    if (win == 'D')
-        printf("It is a draw!\n");
-    else
-        printf("%c won\n", win);
-    longjmp(sched, 1);
-}
-
-static int ntasks;
-
-void schedule(char *table)
-{
+    /* Enable raw mode in terminal and non-blocking read */
     enableRawMode();
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
     display_board = true;
     stop_war = false;
     memset(move_record, 0, sizeof(move_record));
     move_count = 0;
-    /* Enable non-blocking read */
-    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
-    void (*registered_task[])(void *) = {task_war, task_finish};
-    struct arg war_args = {.table = table, .player = 'X'};
-    int round;
-    for (round = 0; !stop_war && round < MAX_ROUND; round++) {
-        crlist = malloc(sizeof(struct list_head));
-        INIT_LIST_HEAD(crlist);
-        ntasks = 2;
-        setjmp(sched);
+    int round = 0;
+    for (int i = 0; !stop_war && i < MAX_ROUND; i++) {
+        coro_timer_init();
+        task_init();
 
-        while (ntasks-- > 0) {
-            if (ntasks & 1U) {
-                registered_task[0](&war_args);
+        struct arg mcts_arg = {.table = table, .player = 'X'};
 
-            } else {
-                memset(table, ' ', N_GRIDS);
-                registered_task[1](&round);
+        struct arg negamax_arg = {.table = table, .player = 'O'};
+
+        struct arg drawboard_arg = {.table = table};
+
+        preempt_disable();
+        coro_timer_create(10000);
+
+        char win = check_win(table);
+        while (win == ' ') {
+            task_add(mcts_callback, &mcts_arg);
+            task_add(listen_keyboard, "");
+            task_add(negamax_callback, &negamax_arg);
+            task_add(listen_keyboard, "");
+            task_add(drawboard_callback, &drawboard_arg);
+            task_add(listen_keyboard, "");
+
+            while (!list_empty(&task_main.list) || !list_empty(&task_reap)) {
+                preempt_enable();
+                coro_timer_wait();
+                preempt_disable();
             }
+            win = check_win(table);
         }
+
+        if (win == 'D')
+            printf("It's a draw!\n");
+        else
+            printf("%c won!\n", win);
+
+        preempt_enable();
+        coro_timer_cancel();
+
+        memset(table, ' ', N_GRIDS);
+        memcpy(move_records[i], move_record, sizeof(move_record));
+        memset(move_record, 0, sizeof(move_record));
+        move_counts[i] = move_count;
+        move_count = 0;
+        round = i;
     }
 
     disableRawMode();
@@ -722,7 +672,7 @@ static bool do_ttt(int argc, char *argv[])
     /* If AI v.s. AI, we make the second AI utilize negamax Algorithm */
     if (ai_civil_war) {
         negamax_init();
-        schedule(table);
+        ai_game(table);
         return true;
     }
 
